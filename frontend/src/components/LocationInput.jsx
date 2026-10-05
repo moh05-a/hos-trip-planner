@@ -1,41 +1,56 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { searchPlaces } from '../lib/api'
 
+const MIN_CHARS = 2
+
 /**
  * Text input with place suggestions. `value` is { label, lat?, lng?, short? }.
  * Typing clears the coordinates; picking a suggestion sets them.
  */
 export default function LocationInput({ label, marker, value, onChange, placeholder, error }) {
   const [open, setOpen] = useState(false)
-  const [results, setResults] = useState([])
+  // results remember the text they were found for, so stale ones can be hidden
+  const [found, setFound] = useState({ q: '', items: [] })
   const [loading, setLoading] = useState(false)
   const [active, setActive] = useState(-1)
   const listId = useId()
   const inputId = useId()
   const boxRef = useRef(null)
+  const sent = useRef(0)
+  const shown = useRef(0)
+  const lastSentAt = useRef(0)
   const query = value?.label || ''
   const picked = value?.lat != null
-  const suggestions = picked || query.trim().length < 3 ? [] : results
+  const typed = query.trim().toLowerCase()
+  // keep showing results for an earlier prefix ("chi") while the search for "chicago" is on its way
+  const suggestions = picked || typed.length < MIN_CHARS || !typed.startsWith(found.q) ? [] : found.items
 
   useEffect(() => {
-    if (picked || query.trim().length < 3) return
-    const ctrl = new AbortController()
+    const q = query.trim()
+    if (picked || q.length < MIN_CHARS) return
+    // wait for a 200 ms pause, but never more than 400 ms after the last request,
+    // so suggestions keep coming while someone types without stopping
+    const wait = Math.max(0, Math.min(200, lastSentAt.current + 400 - Date.now()))
     const t = setTimeout(async () => {
+      // requests are not aborted when the user keeps typing: the geocoder takes a second
+      // or two, and an answer for a shorter prefix is still worth showing
+      lastSentAt.current = Date.now()
+      const n = ++sent.current
       setLoading(true)
       try {
-        const r = await searchPlaces(query, ctrl.signal)
-        setResults(r)
-        setActive(r.length ? 0 : -1)
+        const items = await searchPlaces(q)
+        if (n > shown.current) {
+          shown.current = n
+          setFound({ q: q.toLowerCase(), items })
+          setActive(items.length ? 0 : -1)
+        }
       } catch {
         /* suggestions are optional - the server geocodes free text too */
       } finally {
-        setLoading(false)
+        if (n === sent.current) setLoading(false)
       }
-    }, 350)
-    return () => {
-      clearTimeout(t)
-      ctrl.abort()
-    }
+    }, wait)
+    return () => clearTimeout(t)
   }, [query, picked])
 
   useEffect(() => {

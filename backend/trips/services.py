@@ -63,9 +63,12 @@ def _short(city, state, fallback):
 
 # ------------------------------------------------------------------ geocode --
 def _photon(q, limit):
-    data = _get(f"{PHOTON_URL}/api/", params={"q": q, "limit": limit, "lang": "en",
-                                               # bias to the continental US
-                                               "lat": 39.5, "lon": -98.35})
+    # A location bias pulls short prefixes toward small places near the bias point
+    # ("Chi" -> Chicago Avenue, KS), so filter to North America and to places a truck
+    # can go instead: no states or counties.
+    data = _get(f"{PHOTON_URL}/api/", params={
+        "q": q, "limit": limit + 4, "lang": "en", "bbox": "-168,14,-52,72",
+        "layer": ["city", "district", "locality", "street", "house", "other"]})
     out = []
     for f in data.get("features", []):
         p = f.get("properties", {})
@@ -76,9 +79,11 @@ def _photon(q, limit):
         parts = [p.get("name"), p.get("street") and f"{p.get('housenumber', '')} {p['street']}".strip(),
                  p.get("city") if p.get("city") != p.get("name") else None, p.get("state"), p.get("countrycode")]
         label = ", ".join(dict.fromkeys(x for x in parts if x))
+        if any(o["label"] == label for o in out):
+            continue
         out.append({"label": label, "short": _short(city, p.get("state"), p.get("name") or label),
                     "lat": lat, "lng": lng})
-    return out
+    return out[:limit]
 
 
 def _nominatim(q, limit):
